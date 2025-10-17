@@ -18,26 +18,26 @@ SYSTEM_PROMPT = r"""
 {
   "sensor_suite": [
     {
-      "name": "実衛星名",             // 例: "Sentinel-2A/B"
+      "name": "実衛星名",             
       "platform": "LEO|SSO|GEO",
-      "bands": ["VNIR","SWIR","TIR","C-SAR","L-SAR" など],
+      "bands": ["VNIR","SWIR","TIR","C-SAR","L-SAR"],
       "gsd_m": 10.0,
       "revisit_days": 5.0,
       "swath_km": 290.0,
-      "typical_products": ["NDVI","NDWI","LST" など],
-      "constraints": ["雲被りに弱い" など]
+      "typical_products": ["NDVI","NDWI","LST"],
+      "constraints": ["雲被りに弱い"]
     }
   ],
   "capability_summary": {
     "can": [
-      "例: NDVIトレンドの週次監視（10 m, 5日再訪, 290 kmスワス）",
-      "例: 干ばつ早期検知（NDVI偏差<-0.1を連続3日で警戒）",
-      "例: 冠水面の面的把握（C-SAR, 10 m, 昼夜観測）"
+      "NDVIトレンドの週次監視（10 m, 5日再訪, 290 kmスワス）",
+      "干ばつ早期検知（NDVI偏差<-0.1を連続3日で警戒）",
+      "冠水面の面的把握（C-SAR, 10 m, 昼夜観測）"
     ],
     "cannot": [
-      "例: 雲量>60%地域での連続監視（光学は欠測多発, 代替: SAR）",
-      "例: 病害種別同定（分光分解能/教師データ不足）",
-      "例: 日次LSTマップの安定取得（TIR再訪不足＋雲影響）"
+      "雲量>60%地域での連続監視（光学は欠測多発, 代替: SAR）",
+      "病害種別同定（分光分解能/教師データ不足）",
+      "日次LSTマップの安定取得（TIR再訪不足＋雲影響）"
     ]
   }
 }
@@ -46,49 +46,54 @@ SYSTEM_PROMPT = r"""
 {usecase_json}
 """
 
-# --- ここから追記：人が読めるレンダリング ---
-data = st.session_state.get("tab1_json") or parsed  # 既存セッション保存のキー名に合わせて調整
-suite = data.get("sensor_suite", [])
-caps  = data.get("capability_summary", {})
-
-# ① センサ構成テーブル
-if suite:
-    st.markdown("#### ① 衛星センサ構成（衛星のみ）")
+# ========= 追記：Tab1の人間可読レンダリング =========
+def _render_tab1_readable(data):
     import pandas as pd
-    df = pd.DataFrame([
-        {
-            "衛星名": s.get("name",""),
-            "軌道": s.get("platform",""),
-            "バンド": ", ".join(s.get("bands", [])),
-            "GSD(m)": s.get("gsd_m",""),
-            "再訪(日)": s.get("revisit_days",""),
-            "スワス(km)": s.get("swath_km",""),
-            "代表プロダクト": ", ".join(s.get("typical_products", [])),
-            "制約": ", ".join(s.get("constraints", [])),
-        } for s in suite
-    ])
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    suite = (data or {}).get("sensor_suite", [])
+    caps  = (data or {}).get("capability_summary", {})
 
-# ② できること / できないこと
-st.markdown("#### ② 衛星のみで**できること / できないこと**")
-can = caps.get("can", [])
-cannot = caps.get("cannot", [])
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("**できること（can）**")
-    if can:
-        for it in can:
-            st.markdown(f"- {it}")
-    else:
-        st.caption("（モデル出力なし）")
-with col2:
-    st.markdown("**できないこと（cannot）**")
-    if cannot:
-        for it in cannot:
-            st.markdown(f"- {it}")
-    else:
-        st.caption("（モデル出力なし）")
-# --- 追記ここまで ---
+    # ① センサ構成テーブル
+    if suite:
+        st.markdown("#### ① 衛星センサ構成（衛星のみ）")
+        df = pd.DataFrame([
+            {
+                "衛星名": s.get("name",""),
+                "軌道": s.get("platform",""),
+                "バンド": ", ".join(s.get("bands", [])),
+                "GSD(m)": s.get("gsd_m",""),
+                "再訪(日)": s.get("revisit_days",""),
+                "スワス(km)": s.get("swath_km",""),
+                "代表プロダクト": ", ".join(s.get("typical_products", [])),
+                "制約": ", ".join(s.get("constraints", [])),
+            } for s in suite
+        ])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # ② できること / できないこと
+    st.markdown("#### ② 衛星のみで **できること / できないこと**")
+    can = caps.get("can", [])
+    cannot = caps.get("cannot", [])
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**できること（can）**")
+        if can:
+            for it in can: st.markdown(f"- {it}")
+        else:
+            st.caption("（モデル出力なし）")
+    with col2:
+        st.markdown("**できないこと（cannot）**")
+        if cannot:
+            for it in cannot: st.markdown(f"- {it}")
+        else:
+            st.caption("（モデル出力なし）")
+
+    # JSONプレビューは折りたたみ
+    with st.expander("現在のTab1 JSON（衛星のみ）", expanded=False):
+        st.json(data, expanded=False)
+
+# 保存直後に呼び出し（※この1行を入れる）
+_render_tab1_readable(st.session_state.get("tab1_json"))
+# ========= 追記ここまで =========
 
 
 def _call_llm(client, model, payload):
