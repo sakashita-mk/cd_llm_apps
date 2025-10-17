@@ -11,7 +11,11 @@ st.title("🌍 CDPユースケース構成アシスタント（Groq / Llama3.1�
 
 with st.sidebar:
     st.subheader("API設定")
-    api_key = st.text_input("GROQ_API_KEY", type="password", help="Groqコンソールで発行")
+    
+    # Secrets優先で読み取り。UI入力でも上書き可。
+    api_key = st.secrets.get("GROQ_API_KEY") or st.text_input(
+        "GROQ_API_KEY", type="password", help="Groqコンソールで発行"
+    )
     model_name = st.selectbox("モデル", ["llama-3.1-8b-instant","llama-3.1-70b-versatile"], index=0)
     st.caption("※ 無料枠の制限に注意。")
 
