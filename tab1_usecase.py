@@ -2,50 +2,94 @@
 import json, streamlit as st
 from uc_seed import UC_DATA
 
-SYSTEM_PROMPT = """
-あなたは衛星リモートセンシングの専門家です。以下のユースケースのために、
-①「衛星のみのセンサ構成」と ②「その構成でできること／できないこと」を JSON で出力してください。
+SYSTEM_PROMPT = r"""
+あなたはPwC-CDP準拠の衛星リモートセンシング専門家です。
+以下のユースケースのために、①「衛星のみのセンサ構成」と ②「その構成でできること／できないこと」を JSON **のみ**で出力してください。
+**空欄やプレースホルダ（"string"）は禁止**。必ず具体名と数値を埋めること。
 
-# 出力仕様（必須、厳守）
-- 文章や前置きは禁止。JSON **のみ**を返す。
-- 末尾カンマ・コメントは禁止。
-- キーは以下のみ。型も固定。
+# 制約
+- 非衛星（UAV/HAPS/ドローン/IoT/行政DB 等）は**絶対に含めない**。
+- 末尾カンマ、コメント、コードフェンス、説明文は**禁止**。
+- 既知の実衛星のみを用いる：{Sentinel-1, Sentinel-2, Landsat-8, Landsat-9, Terra/MODIS, Aqua/MODIS, VIIRS, ALOS-2, PlanetScope, WorldView-3, SMAP}
+- sensor_suite は **少なくとも3件**。
+- capability_summary の can / cannot は **各3件以上**。各行に**条件の数値**（例：10 m, 5 days, 290 km, NDVI<-0.1）を入れる。
 
+# 出力スキーマ（固定）
 {
   "sensor_suite": [
     {
-      "name": "string",                // 例: "Sentinel-2A/B"
-      "platform": "LEO|GEO|SSO",
-      "bands": ["string"],             // 例: ["VNIR","SWIR"]
-      "gsd_m": number,                 // 空間分解能 (m)
-      "revisit_days": number,          // 公称再訪 (日)
-      "swath_km": number,              // 観測幅 (km)
-      "typical_products": ["string"],  // 例: ["NDVI","LAI"]
-      "constraints": ["string"]        // 例: ["雲被りに弱い"]
+      "name": "実衛星名",             // 例: "Sentinel-2A/B"
+      "platform": "LEO|SSO|GEO",
+      "bands": ["VNIR","SWIR","TIR","C-SAR","L-SAR" など],
+      "gsd_m": 10.0,
+      "revisit_days": 5.0,
+      "swath_km": 290.0,
+      "typical_products": ["NDVI","NDWI","LST" など],
+      "constraints": ["雲被りに弱い" など]
     }
   ],
   "capability_summary": {
     "can": [
-      "圃場レベルのNDVIトレンド監視（>10m GSD, 5日再訪で週次把握）",
-      "干ばつストレスの面的把握（NDVI/NDWIの偏差で早期検知）"
+      "例: NDVIトレンドの週次監視（10 m, 5日再訪, 290 kmスワス）",
+      "例: 干ばつ早期検知（NDVI偏差<-0.1を連続3日で警戒）",
+      "例: 冠水面の面的把握（C-SAR, 10 m, 昼夜観測）"
     ],
     "cannot": [
-      "雲量>60%での連続監視（光学のみでは欠測が多い）",
-      "地表温度の高頻度取得（LST衛星の再訪が不足）"
+      "例: 雲量>60%地域での連続監視（光学は欠測多発, 代替: SAR）",
+      "例: 病害種別同定（分光分解能/教師データ不足）",
+      "例: 日次LSTマップの安定取得（TIR再訪不足＋雲影響）"
     ]
   }
 }
 
-[capability_summaryの書き方]
-- can：目的・測れるもの・条件（GSD/再訪/指標・しきい値）が一文に入ること。
-  例：「圃場の乾燥ストレス早期検知（NDVI偏差-0.1以下を3日以上継続でアラート）」
-- cannot：理由を必ず添える（雲被り/再訪不足/スペクトル不足/地上検証必須など）。
-  例：「作物別の病害種別判定（分光解像度不足・教師データ不足）」
-- “曖昧語（高頻度・広域）”は禁止。数値で書く。
-
 # ユースケース入力
-{{usecase_json}}
+{usecase_json}
 """
+
+# --- ここから追記：人が読めるレンダリング ---
+data = st.session_state.get("tab1_json") or parsed  # 既存セッション保存のキー名に合わせて調整
+suite = data.get("sensor_suite", [])
+caps  = data.get("capability_summary", {})
+
+# ① センサ構成テーブル
+if suite:
+    st.markdown("#### ① 衛星センサ構成（衛星のみ）")
+    import pandas as pd
+    df = pd.DataFrame([
+        {
+            "衛星名": s.get("name",""),
+            "軌道": s.get("platform",""),
+            "バンド": ", ".join(s.get("bands", [])),
+            "GSD(m)": s.get("gsd_m",""),
+            "再訪(日)": s.get("revisit_days",""),
+            "スワス(km)": s.get("swath_km",""),
+            "代表プロダクト": ", ".join(s.get("typical_products", [])),
+            "制約": ", ".join(s.get("constraints", [])),
+        } for s in suite
+    ])
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+# ② できること / できないこと
+st.markdown("#### ② 衛星のみで**できること / できないこと**")
+can = caps.get("can", [])
+cannot = caps.get("cannot", [])
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown("**できること（can）**")
+    if can:
+        for it in can:
+            st.markdown(f"- {it}")
+    else:
+        st.caption("（モデル出力なし）")
+with col2:
+    st.markdown("**できないこと（cannot）**")
+    if cannot:
+        for it in cannot:
+            st.markdown(f"- {it}")
+    else:
+        st.caption("（モデル出力なし）")
+# --- 追記ここまで ---
+
 
 def _call_llm(client, model, payload):
     if client is None:
