@@ -25,7 +25,7 @@ SYSTEM_PROMPT = r"""
 - 観測頻度（revisit）
 - 空間分解能（gsd）
 - 観測範囲（swath / 面積 / 雲量条件）
-- コスト（相対OPEX/CAPEX感度）
+- コスト（**月額の予算上限（円）**）
 
 # 出力スキーマ（固定）
 {
@@ -35,7 +35,7 @@ SYSTEM_PROMPT = r"""
     "gsd_m": "数値条件（例：<=10m）",
     "coverage": "面積や流域など（例：対象流域全体, スワス>=250km）",
     "reliability": "欠測率や雲量など（例：欠測率<20%）",
-    "cost": "目安（例：OPEX/月 <= X, サブスクY以下）",
+    "cost": "月額の上限（例：<=500,000円/月 など）",
     "indicators": ["使用指標（例：NDVI, NDWI, LST など）"]
   },
   "dimensions": [
@@ -48,16 +48,12 @@ SYSTEM_PROMPT = r"""
       "risk": "影響（検知遅延, 欠測率, コスト超過 等）",
       "mitigation": "軽減策（SAR併用, 合成, 複数衛星, 地上補完 等）"
     }
-  ],
-  "priority_gaps_top3": [
-    { "axis": "…", "why": "数値根拠入り", "impact": "顧客価値への影響", "quick_win": true }
   ]
 }
 
 # ルール
 - 各フィールドに**少なくとも1つ以上の数値**（m, 日, km, %, 円 など）を入れる。
 - dimensions は **4件すべて**（順不同可）。
-- priority_gaps_top3 は **3件**。quick_win は boolean。
 - 非衛星（UAV/HAPS/IoT/行政DBなど）はここでは提案しない（Tab3で扱う）。
 """
 
