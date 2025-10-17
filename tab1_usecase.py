@@ -1,7 +1,12 @@
 # tab1_usecase.py
-import json, streamlit as st
+import json
+import re
+import streamlit as st
 from uc_seed import UC_DATA
 
+# ============================
+# 1) プロンプト（中身を必ず埋める・数値を入れる・実衛星限定）
+# ============================
 SYSTEM_PROMPT = r"""
 あなたはPwC-CDP準拠の衛星リモートセンシング専門家です。
 以下のユースケースのために、①「衛星のみのセンサ構成」と ②「その構成でできること／できないこと」を JSON **のみ**で出力してください。
@@ -18,7 +23,7 @@ SYSTEM_PROMPT = r"""
 {
   "sensor_suite": [
     {
-      "name": "実衛星名",             
+      "name": "実衛星名",
       "platform": "LEO|SSO|GEO",
       "bands": ["VNIR","SWIR","TIR","C-SAR","L-SAR"],
       "gsd_m": 10.0,
@@ -46,33 +51,134 @@ SYSTEM_PROMPT = r"""
 {usecase_json}
 """
 
-# ========= 追記：Tab1の人間可読レンダリング =========
-def _render_tab1_readable(data):
+# ============================
+# 2) JSONサニタイズ & パース（軽量版）
+# ============================
+def _strip_code_fences(s: str) -> str:
+    # ```json ... ``` / ``` ... ``` を除去
+    return re.sub(r"^```(?:json)?\s*|\s*```$", "", s.strip(), flags=re.IGNORECASE|re.MULTILINE)
+
+def _fix_trailing_commas(s: str) -> str:
+    return re.sub(r",\s*([}\]])", r"\1", s)
+
+def _normalize_scalars(s: str) -> str:
+    s = re.sub(r"\bTrue\b", "true", s)
+    s = re.sub(r"\bFalse\b", "false", s)
+    s = re.sub(r"\bNone\b", "null", s)
+    return s
+
+def _safe_parse_json(raw: str) -> dict:
+    """
+    LLMのゆるJSONをできるだけ救う軽量版。
+    """
+    raw = _strip_code_fences(raw)
+    try:
+        return json.loads(raw)
+    except Exception:
+        try:
+            return json.loads(_normalize_scalars(_fix_trailing_commas(raw)))
+        except Exception as e:
+            raise ValueError(f"JSON解析失敗: {e}\nRaw: {raw[:800]}...")
+
+# ============================
+# 3) 旧→新スキーマの正規化（互換）
+# ============================
+def _normalize_tab1_dict(data: dict) -> dict:
+    """
+    新スキーマ（sensor_suite/capability_summary）に正規化。
+    旧スキーマ（satellite_stack/capabilities_sat_only/limitations_sat_only）にも対応。
+    """
+    data = data or {}
+    if "sensor_suite" in data and "capability_summary" in data:
+        return data  # 既に新スキーマ
+
+    # 旧 -> 新（最低限のフィールド移送）
+    sensors = []
+    if "satellite_stack" in data:
+        sats = (data.get("satellite_stack") or {}).get("satellites", []) or []
+        for s in sats:
+            bands = s.get("bands")
+            if not bands:
+                b = s.get("band")
+                bands = [b] if isinstance(b, str) and b else []
+            sensors.append({
+                "name": s.get("name", ""),
+                "platform": s.get("orbit", ""),
+                "bands": bands,
+                "gsd_m": s.get("gsd_m", None),
+                "revisit_days": s.get("revisit_days", None),
+                "swath_km": s.get("swath_km", None),
+                "typical_products": s.get("typical_products", []),
+                "constraints": list(filter(None, [s.get("role",""), s.get("why","")]))
+            })
+
+    capability_summary = {
+        "can": data.get("capabilities_sat_only", []) or [],
+        "cannot": data.get("limitations_sat_only", []) or []
+    }
+
+    return {
+        "sensor_suite": sensors,
+        "capability_summary": capability_summary
+    }
+
+# ============================
+# 4) Groq 呼び出し（OpenAI互換クライアントで両系に対応）
+# ============================
+def _call_llm(client, model: str, payload: dict):
+    if client is None:
+        return None, "Groq APIキー未設定"
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
+    ]
+
+    # openai==1.51+ の chat_completions.create 互換 & 旧 .chat.completions.create 両対応
+    if hasattr(client, "chat_completions"):
+        resp = client.chat_completions.create(model=model, messages=messages, temperature=0.2, max_tokens=1600)
+    else:
+        resp = client.chat.completions.create(model=model, messages=messages, temperature=0.2, max_tokens=1600)
+
+    raw = resp.choices[0].message.content or ""
+    try:
+        parsed = _safe_parse_json(raw)
+        normalized = _normalize_tab1_dict(parsed)
+        return normalized, None
+    except Exception as e:
+        return None, str(e)
+
+# ============================
+# 5) 人間可読レンダリング（テーブル＋箇条書き＋畳みJSON）
+# ============================
+def _render_tab1_readable(data: dict):
     import pandas as pd
-    suite = (data or {}).get("sensor_suite", [])
-    caps  = (data or {}).get("capability_summary", {})
+
+    data = _normalize_tab1_dict(data)
+    suite = data.get("sensor_suite", []) or []
+    caps = data.get("capability_summary", {}) or {}
+    can = caps.get("can", []) or []
+    cannot = caps.get("cannot", []) or []
 
     # ① センサ構成テーブル
+    st.markdown("#### ① 衛星センサ構成（衛星のみ）")
     if suite:
-        st.markdown("#### ① 衛星センサ構成（衛星のみ）")
-        df = pd.DataFrame([
-            {
-                "衛星名": s.get("name",""),
-                "軌道": s.get("platform",""),
-                "バンド": ", ".join(s.get("bands", [])),
-                "GSD(m)": s.get("gsd_m",""),
-                "再訪(日)": s.get("revisit_days",""),
-                "スワス(km)": s.get("swath_km",""),
-                "代表プロダクト": ", ".join(s.get("typical_products", [])),
-                "制約": ", ".join(s.get("constraints", [])),
-            } for s in suite
-        ])
+        df = pd.DataFrame([{
+            "衛星名": s.get("name",""),
+            "軌道": s.get("platform",""),
+            "バンド": ", ".join([b for b in (s.get("bands") or []) if b]),
+            "GSD(m)": s.get("gsd_m",""),
+            "再訪(日)": s.get("revisit_days",""),
+            "スワス(km)": s.get("swath_km",""),
+            "代表プロダクト": ", ".join(s.get("typical_products", []) or []),
+            "制約": ", ".join(s.get("constraints", []) or []),
+        } for s in suite])
         st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("センサ構成（sensor_suite）が空です。プロンプトやトークン長を見直してください。")
 
-    # ② できること / できないこと
+    # ② できる / できない
     st.markdown("#### ② 衛星のみで **できること / できないこと**")
-    can = caps.get("can", [])
-    cannot = caps.get("cannot", [])
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**できること（can）**")
@@ -87,72 +193,37 @@ def _render_tab1_readable(data):
         else:
             st.caption("（モデル出力なし）")
 
-    # JSONプレビューは折りたたみ
+    # JSONプレビュー（畳み）
     with st.expander("現在のTab1 JSON（衛星のみ）", expanded=False):
         st.json(data, expanded=False)
 
-# 保存直後に呼び出し（※この1行を入れる）
-_render_tab1_readable(st.session_state.get("tab1_json"))
-# ========= 追記ここまで =========
-
-
-def _call_llm(client, model, payload):
-    if client is None:
-        return None, "Groq APIキー未設定"
-    messages = [
-        {"role":"system","content": SYSTEM_PROMPT},
-        {"role":"user","content": json.dumps(payload, ensure_ascii=False)}
-    ]
-    resp = client.chat_completions.create(  # openai>=1.51 なら chat.completions.create
-        model=model, messages=messages, temperature=0.25
-    ) if hasattr(client, "chat_completions") else client.chat.completions.create(
-        model=model, messages=messages, temperature=0.25
-    )
-    content = resp.choices[0].message.content
-    try:
-        data = json.loads(content)
-        # 念のためガード：非衛星が紛れたら除外
-        sats = data.get("satellite_stack", {}).get("satellites", [])
-        filtered = []
-        ban_words = {"uav","drone","haps","iot","radar","cctv","admin","database","sns"}
-        for s in sats:
-            text = (" ".join(str(v) for v in s.values())).lower()
-            if not any(w in text for w in ban_words):
-                filtered.append(s)
-        if "satellite_stack" in data:
-            data["satellite_stack"]["satellites"] = filtered
-        return data, None
-    except Exception as e:
-        return None, f"JSON解析失敗: {e}\nRaw: {content[:400]}..."
-
+# ============================
+# 6) エントリポイント（既存 app.py から呼ばれる）
+# ============================
 def render_tab(client, model):
     st.subheader("① ユースケース定義 → 衛星（のみ）センサ構成")
 
+    # 入力UI
     uc = st.selectbox("ユースケース", list(UC_DATA.keys()), index=1)
     seed = UC_DATA[uc]
-
     with st.expander("📌 背景・顧客の問い・現状の課題", expanded=True):
         bg = st.text_area("背景", seed["background"])
         qn = st.text_area("顧客の問い", seed["question"])
         isu = st.text_area("現状の課題", seed["issues"])
 
-    if st.button("衛星センサ構成を生成"):
+    # 生成ボタン
+    if st.button("衛星センサ構成を生成", type="primary", use_container_width=True):
         payload = {"usecase": uc, "context": {"background": bg, "question": qn, "issues": isu}}
-        data, err = _call_llm(client, model, payload)
+        with st.spinner("Groqに問い合わせ中…"):
+            data, err = _call_llm(client, model, payload)
         if err:
-            st.error(err); return
-        st.session_state["tab1_json"] = data
-        st.success("Tab1 JSON を保存しました。")
-        st.json(data)
-        if "summary" in data:
-            st.markdown("### 🛰 衛星のみでできること / 限界")
-            if data.get("capabilities_sat_only"): 
-                st.write("**できること（衛星のみ）**")
-                for c in data["capabilities_sat_only"]: st.markdown(f"- {c}")
-            if data.get("limitations_sat_only"):
-                st.write("**限界（衛星のみ）**")
-                for l in data["limitations_sat_only"]: st.markdown(f"- {l}")
+            st.error(err)
+        else:
+            st.session_state["tab1_json"] = data
+            st.success("Tab1 JSON を保存しました。")
+            _render_tab1_readable(st.session_state["tab1_json"])
 
+    # セッションに前回結果があれば表示
     if st.session_state.get("tab1_json"):
-      st.caption("現在のTab1 JSON（衛星のみ）")
-      st.json(st.session_state["tab1_json"])
+        # ユーザーが生成ボタンを押さなくても、常に最新状態を見せる
+        _render_tab1_readable(st.session_state["tab1_json"])
