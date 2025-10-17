@@ -7,7 +7,7 @@ from tab2_gap import render_tab as tab2_render
 from tab3_plan import render_tab as tab3_render
 
 st.set_page_config(page_title="CDPユースケース構成アシスタント", layout="wide")
-st.title("🌍 CDPユースケース構成アシスタント（Groq / Llama3.1）")
+st.title("ユースケース構成アシスタント（Groq / Llama3.1）")
 
 with st.sidebar:
     st.subheader("API設定")
