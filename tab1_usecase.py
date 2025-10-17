@@ -148,9 +148,59 @@ def _call_llm(client, model: str, payload: dict):
     try:
         parsed = _safe_parse_json(raw)
         normalized = _normalize_tab1_dict(parsed)
+        normalized = _apply_quick_facts_corrections(normalized)
         return normalized, None
     except Exception as e:
         return None, str(e)
+
+# --- 追記: 既知センサのクイック補正（事実の下限ガード） ---
+def _apply_quick_facts_corrections(data: dict) -> dict:
+    facts = {
+        "Sentinel-2": {
+            "platform": "SSO", "gsd_m": 10, "revisit_days": 5, "swath_km": 290,
+            "bands": ["VNIR","SWIR"], "typical_products": ["NDVI","NDWI","EVI"]
+        },
+        "SMAP": {
+            "platform": "SSO", "gsd_m": 36000, "revisit_days": 3, "swath_km": 1000,
+            "bands": ["L-Microwave"], "typical_products": ["土壌水分"]
+        },
+        "VIIRS": {
+            "platform": "SSO", "gsd_m": 750, "revisit_days": 1, "swath_km": 3000,
+            "bands": ["VNIR","SWIR","TIR"], "typical_products": ["NDVI","LST","雲・火災検知"]
+        },
+        "Sentinel-1": {
+            "platform": "SSO", "gsd_m": 10, "revisit_days": 6, "swath_km": 250,
+            "bands": ["C-SAR"], "typical_products": ["冠水検知","土壌水分 proxy"]
+        },
+        "ALOS-2": {
+            "platform": "SSO", "gsd_m": 3, "revisit_days": 14, "swath_km": 50,
+            "bands": ["L-SAR"], "typical_products": ["地表変動","森林構造"]
+        },
+    }
+
+    suite = (data or {}).get("sensor_suite", [])
+    for s in suite:
+        n = (s.get("name") or "").strip()
+        # ゆらぎ対策（例: "Sentinel-2A/B", "SMAP Mission"）
+        key = next((k for k in facts.keys() if k.lower() in n.lower()), None)
+        if not key:
+            continue
+        f = facts[key]
+        # 既存値が明らかに不合理なときだけ上書き（Noneや0/異常値）
+        s["platform"] = f.get("platform", s.get("platform"))
+        if not s.get("bands"): s["bands"] = f.get("bands")
+        if not s.get("typical_products"): s["typical_products"] = f.get("typical_products")
+        try:
+            if not s.get("gsd_m") or float(s["gsd_m"]) < 1 or float(s["gsd_m"]) > 100000: s["gsd_m"] = f["gsd_m"]
+            if not s.get("revisit_days") or float(s["revisit_days"]) <= 0 or float(s["revisit_days"]) > 60: s["revisit_days"] = f["revisit_days"]
+            if not s.get("swath_km") or float(s["swath_km"]) <= 0 or float(s["swath_km"]) > 5000: s["swath_km"] = f["swath_km"]
+        except Exception:
+            # 数値でない場合も補正
+            s["gsd_m"] = f["gsd_m"]
+            s["revisit_days"] = f["revisit_days"]
+            s["swath_km"] = f["swath_km"]
+    return data
+  
 
 # ============================
 # 5) 人間可読レンダリング（テーブル＋箇条書き＋畳みJSON）
