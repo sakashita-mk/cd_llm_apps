@@ -5,46 +5,58 @@ import streamlit as st
 import pandas as pd
 
 # =========================================
-# 1) プロンプト：JSONのみ / 具体数値 / 軸を固定
+# 0) 仮説目的（ハードコーディング）※編集可
+# =========================================
+PURPOSE_HYPOTHESIS = (
+    "干ばつ・低温等の気象ストレスを、圃場レベル（~10m）で3日以内に面的検知し、"
+    "欠測率を20%未満に抑えたうえで、保険金仮査定を7日以内に自動化したい。"
+)
+
+# =========================================
+# 1) プロンプト：JSONのみ / 具体数値 / 目的→To-Be→Gap
 # =========================================
 SYSTEM_PROMPT = r"""
-あなたはGAP分析アナリストです。
-入力（Tab1の衛星のみ構成JSON）を読み、観測体制のGAPを4軸で定量的に評価し、JSONのみで出力してください。
-説明文・コードフェンス・スキーマ例・前置きは禁止。**JSONのみ**を返すこと。
+あなたはPwC-CDP準拠のGAP分析アナリストです。
+入力（Tab1の衛星のみ構成JSON と goal）を読み、目的達成に必要な **To-Be観測要件** を定義し、
+現状（As-Is=Tab1）との **GAP** を4軸で定量化し、**JSONのみ**で出力してください。
+説明・前置き・コードフェンスは禁止。
 
 # 分析軸（固定）
 - 観測頻度（revisit）
 - 空間分解能（gsd）
 - 観測範囲（swath / 面積 / 雲量条件）
-- コスト（概算：相対的なOPEX/CAPEX感度）
+- コスト（相対OPEX/CAPEX感度）
 
 # 出力スキーマ（固定）
 {
-  "gap_summary": "短い要約（1-2文）",
+  "goal": "入力goalを要約（1文）",
+  "to_be_requirements": {
+    "revisit_days": "数値 + 条件（例：<=3日, 雲量<40%）",
+    "gsd_m": "数値条件（例：<=10m）",
+    "coverage": "面積や流域など（例：対象流域全体, スワス>=250km）",
+    "reliability": "欠測率や雲量など（例：欠測率<20%）",
+    "cost": "目安（例：OPEX/月 <= X, サブスクY以下）",
+    "indicators": ["使用指標（例：NDVI, NDWI, LST など）"]
+  },
   "dimensions": [
     {
       "axis": "観測頻度|空間分解能|観測範囲|コスト",
-      "current": "例: 再訪6-14日 / 10m / スワス290km / 年間OPEX X",
-      "target": "例: 1-3日 / 1-3m / 流域全体 / コストY以下 など",
+      "current": "As-Is（Sentinel-2:5日, 10m, 290km 等）",
+      "target": "To-Be（<=3日, <=10m, 流域全体 等）",
       "gap": "大|中|小",
-      "reason": "ギャップの根拠（数値を必ず含める。例: 雲量>60%地域では欠測多発、TIRは再訪>5日 等）",
+      "reason": "根拠（数値を含める）",
       "risk": "影響（検知遅延, 欠測率, コスト超過 等）",
       "mitigation": "軽減策（SAR併用, 合成, 複数衛星, 地上補完 等）"
     }
   ],
   "priority_gaps_top3": [
-    {
-      "axis": "観測頻度|空間分解能|観測範囲|コスト",
-      "why": "優先理由（数値を1つ以上含める）",
-      "impact": "顧客価値への影響",
-      "quick_win": true
-    }
+    { "axis": "…", "why": "数値根拠入り", "impact": "顧客価値への影響", "quick_win": true }
   ]
 }
 
 # ルール
-- 各フィールドに**少なくとも1つ以上の数値**（m, 日, km, %, 件など）を入れる。
-- dimensions は **4件すべて**出す（順不同可）。
+- 各フィールドに**少なくとも1つ以上の数値**（m, 日, km, %, 円 など）を入れる。
+- dimensions は **4件すべて**（順不同可）。
 - priority_gaps_top3 は **3件**。quick_win は boolean。
 - 非衛星（UAV/HAPS/IoT/行政DBなど）はここでは提案しない（Tab3で扱う）。
 """
@@ -65,7 +77,6 @@ def _normalize_scalars(s: str) -> str:
     return s
 
 def _slice_first_json_block(s: str) -> str:
-    """先頭の { .. 最後の } までを抜き出す（説明文が混ざるケース対策）"""
     start = s.find("{")
     end = s.rfind("}")
     return s[start:end+1] if start != -1 and end != -1 and end > start else s
@@ -93,23 +104,37 @@ def _call_llm(client, model: str, payload: dict):
 
     try:
         if hasattr(client, "chat_completions"):
-            resp = client.chat_completions.create(model=model, messages=messages, temperature=0.2, max_tokens=1800)
+            resp = client.chat_completions.create(model=model, messages=messages, temperature=0.2, max_tokens=2000)
         else:
-            resp = client.chat.completions.create(model=model, messages=messages, temperature=0.2, max_tokens=1800)
+            resp = client.chat.completions.create(model=model, messages=messages, temperature=0.2, max_tokens=2000)
         raw = resp.choices[0].message.content or ""
         data = _safe_parse_json(raw)
         return data, None
     except Exception as e:
-        # なるべくRawを見たいので先頭だけ付ける
         err = f"JSON解析失敗: {e}"
         return None, f"{err}\nRaw: {str(raw)[:700]}..." if 'raw' in locals() else err
 
 # =========================================
-# 4) レンダリング（表 + 優先GAP）
+# 4) レンダリング（目的・To-Be・GAP表・Top3）
 # =========================================
 def _render_gap_readable(data: dict):
+    tobe = data.get("to_be_requirements", {}) or {}
     dims = data.get("dimensions", []) or []
     top3 = data.get("priority_gaps_top3", []) or []
+
+    st.markdown("#### 目的（To-Beに反映）")
+    st.write(data.get("goal", "（モデル出力なし）"))
+
+    st.markdown("#### To-Be観測要件（LLM推定）")
+    tobe_rows = [{
+        "観測頻度（revisit_days）": tobe.get("revisit_days",""),
+        "空間分解能（gsd_m）": tobe.get("gsd_m",""),
+        "観測範囲（coverage）": tobe.get("coverage",""),
+        "信頼性（reliability）": tobe.get("reliability",""),
+        "コスト（cost）": tobe.get("cost",""),
+        "指標（indicators）": ", ".join(tobe.get("indicators", []) or [])
+    }]
+    st.dataframe(pd.DataFrame(tobe_rows), use_container_width=True, hide_index=True)
 
     st.markdown("#### ギャップ一覧（4軸）")
     if dims:
@@ -124,7 +149,7 @@ def _render_gap_readable(data: dict):
         } for d in dims])
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.warning("dimensions が空でした。プロンプトやトークン長を見直してください。")
+        st.warning("dimensions が空でした。プロンプト/トークン長を見直してください。")
 
     st.markdown("#### 優先GAP（Top3）")
     if top3:
@@ -136,24 +161,27 @@ def _render_gap_readable(data: dict):
     else:
         st.caption("（モデル出力なし）")
 
-    # JSONプレビューは畳み
     with st.expander("現在のTab2 JSON（GAP分析）", expanded=False):
         st.json(data, expanded=False)
 
 # =========================================
-# 5) エントリポイント（app.py から呼ばれる）
+# 5) エントリポイント
 # =========================================
 def render_tab(client, model, tab1_json):
-    st.subheader("② GAP分析（頻度 / 分解能 / 範囲 / コスト）")
+    st.subheader("② GAP分析（目的→To-Be→差分）")
 
     if not tab1_json:
         st.info("まずは『① ユースケース定義』でセンサ構成を生成してください。")
         return
 
+    # 目的：仮説を初期値にしてユーザーが編集可能
+    st.markdown("#### このユースケースで実現したいこと（目的）")
+    default_goal = st.session_state.get("tab2_goal", PURPOSE_HYPOTHESIS)
+    goal = st.text_area("目的（編集可）", value=default_goal, height=80, help="To-Be観測要件の導出に使います。")
+    st.session_state["tab2_goal"] = goal
+
     if st.button("GAP分析を実行", type="primary", use_container_width=True):
-        payload = {
-            "tab1_output": tab1_json  # そのまま渡す（LLM側で読む）
-        }
+        payload = {"tab1_output": tab1_json, "goal": goal}
         with st.spinner("Groqに問い合わせ中…"):
             data, err = _call_llm(client, model, payload)
         if err:
@@ -162,6 +190,5 @@ def render_tab(client, model, tab1_json):
             st.session_state["tab2_json"] = data
             st.success("Tab2 JSON を保存しました。")
 
-    # 既存結果があれば表示
     if st.session_state.get("tab2_json"):
         _render_gap_readable(st.session_state["tab2_json"])
