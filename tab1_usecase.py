@@ -17,7 +17,11 @@ SYSTEM_PROMPT = r"""
 - 末尾カンマ、コメント、コードフェンス、説明文は**禁止**。
 - 既知の実衛星のみを用いる：{Sentinel-1, Sentinel-2, Landsat-8, Landsat-9, Terra/MODIS, Aqua/MODIS, VIIRS, ALOS-2, PlanetScope, WorldView-3, SMAP}
 - sensor_suite は **少なくとも3件**。
-- capability_summary の can / cannot は **各3件以上**。各行に**条件の数値**（例：10 m, 5 days, 290 km, NDVI<-0.1）を入れる。
+- capability_summary の can / cannot は **各5件以上**。各行に**少なくとも2つ以上の数値**（GSD/再訪/しきい値/スワス/雲量% など）を必ず含める。
+- 次のフォーマットで書く（日本語、1行1要素）：
+  - can: 「<やること>（指標=<指標>, しきい値=<数値>, 解像度=<m>, 再訪=<日>, 対応面積=<km²> など）」 
+  - cannot: 「<できない理由>（制約=<原因>, 回避策=<代替手段>, 閾値/条件=<数値>）」
+- “高頻度・広域・高精度”等の**曖昧語禁止**。必ず数値で条件を入れる。
 
 # 出力スキーマ（固定）
 {
@@ -221,7 +225,7 @@ def render_tab(client, model):
         else:
             st.session_state["tab1_json"] = data
             st.success("Tab1 JSON を保存しました。")
-            _render_tab1_readable(st.session_state["tab1_json"])
+            #_render_tab1_readable(st.session_state["tab1_json"])
 
     # セッションに前回結果があれば表示
     if st.session_state.get("tab1_json"):
