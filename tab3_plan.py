@@ -5,18 +5,28 @@ import streamlit as st
 import pandas as pd
 
 # =========================
-# 1) プロンプト：JSONのみ / 統合案スキーマ固定
+# 1) SYSTEM PROMPT：JSONのみ / 理由（rationale）つき統合案
 # =========================
 SYSTEM_PROMPT = r"""
-あなたは空間データや衛星リモートセンシングの専門家です。
-入力（Tab1=衛星のみ構成, Tab2=GAP分析）を読み、GAPを埋めて目的を満たす**統合方針（衛星+UAV/HAPS+地上補完+融合設計）**を設計し、**JSONのみ**で出力してください。
-説明文・前置き・コードフェンスは禁止。
+あなたはPwC-CDP準拠のアーキテクトです。
+入力（Tab1=衛星のみ構成, Tab2=GAP分析）を読み、GAPを埋めて目的を満たす
+**統合方針（衛星 + UAV/HAPS + 地上補完 + 融合設計）**を設計し、**JSONのみ**で出力してください。
+説明文・前置き・コードフェンスは禁止。「例:」「サンプル」等の語も出力禁止。
 
 # 出力スキーマ（固定）
 {
+  "rationale": {
+    "overview": "全体方針（例: 雲被りをSAR/HAPSで補完しTo-Beの再訪<=3日・欠測率<20%を達成）",
+    "satellite_choice": "衛星構成の理由（再訪/分解能/スワス/コストの数値根拠）",
+    "aerial_choice": "UAV/HAPS採用の理由（曇天時補完・高分解能検証・日量カバー等）",
+    "ground_choice": "地上観測の理由（QA/QC・バイアス補正・閾値設定の根拠）",
+    "fusion_design_choice": "融合処理をこう設計する理由（NDVI/LST統合・欠測補間等）",
+    "cost_strategy": "月額上限内に収める戦略（商用衛星は必要時タスク等）",
+    "risk_policy": "主要リスクと方針（雲/風/許認可→フォールバック等）"
+  },
   "constellation": [
     {
-      "name": "実衛星名（例: Sentinel-2, Sentinel-1, VIIRS, ALOS-2, WorldView-3 など）",
+      "name": "実衛星名（例: Sentinel-2, Sentinel-1, VIIRS, ALOS-2, WorldView-3 等）",
       "type": "光学|SAR|熱|マイクロ波",
       "band": "VNIR/SWIR|C-SAR|L-SAR|TIR など",
       "gsd_m": 10,
@@ -28,11 +38,11 @@ SYSTEM_PROMPT = r"""
   "aerial_layer": [
     {
       "name": "UAV|HAPS",
-      "platform": "例: quadcopter|fixed-wing|Zephyr等",
-      "altitude_m": 2000,
-      "endurance_h": 8,
-      "gsd_cm": 5,
-      "coverage_km2_per_day": 50,
+      "platform": "例: quadcopter|fixed-wing|Zephyr 等",
+      "altitude_m": 20000,
+      "endurance_h": 24,
+      "gsd_cm": 30,
+      "coverage_km2_per_day": 200,
       "role": "衛星の欠測補完/高分解能検証 等",
       "why": "採用理由（欠測率/天候/再訪の数値根拠）"
     }
@@ -47,21 +57,21 @@ SYSTEM_PROMPT = r"""
     }
   ],
   "fusion_design": {
-    "data_flow": ["衛星→クラウド→解析→ダッシュボード", "UAV→地上局→クラウド など"],
-    "processing": ["NDVI/NDWI/LST計算", "SAR干渉/後方散乱変化", "欠測補間（合成・時空間）"],
-    "quality": ["地上観測とのバイアス補正", "雲/影/異常値のフラグ付け"]
+    "data_flow": ["衛星→クラウド→解析→ダッシュボード","UAV→地上局→クラウド"],
+    "processing": ["NDVI/NDWI/LST計算","SAR干渉/後方散乱変化","欠測補間（合成・時空間）"],
+    "quality": ["地上観測とのバイアス補正","雲/影/異常値のフラグ付け"]
   },
   "gap_closures": [
     {
       "axis": "観測頻度|空間分解能|観測範囲|コスト",
       "gap_level": "大|中|小",
-      "approach": "採る対策（例: SAR併用/複数衛星合成/HAPSスポット/UAV臨時等）",
+      "approach": "採る対策（例: SAR併用/複数衛星合成/HAPSスポット/UAV臨時）",
       "effect": "期待改善（数値: 日, m, km, % など）"
     }
   ],
   "monthly_cost_estimate": {
-    "satellite": "例：0〜20万円/月（オープン＋必要時の商用タスク）",
-    "aerial": "例：スポット出動 30〜80万円/月（変動）",
+    "satellite": "例：0〜20万円/月",
+    "aerial": "例：スポット出動 30〜80万円/月",
     "ground": "例：機器レンタル + 通信 5〜15万円/月",
     "cloud_processing": "例：5〜15万円/月",
     "total": "例：〜120万円/月"
@@ -77,19 +87,14 @@ SYSTEM_PROMPT = r"""
     {"phase": "GA", "months": "9+", "scope": "運用化：月額上限内での最適運用/運航計画の自動化"}
   ]
 }
-"rationale": {
-  "overview": "全体方針（例: 雲被りリスクをSARとHAPSで補完する統合設計）",
-  "satellite_choice": "衛星構成をこうした理由（例: 再訪頻度・解像度・コストバランス）",
-  "aerial_choice": "UAV/HAPS層を加えた理由（例: 曇天時の光学欠測補完・高分解能検証）",
-  "ground_choice": "地上観測を含めた理由（例: バイアス補正・QA/QC向上）",
-  "fusion_design_choice": "融合設計をこうした理由（例: NDVI/LST統合解析・欠測補間の必要性）",
-  "cost_strategy": "コスト設計の意図（例: 月額上限120万円をターゲットに、商用衛星は必要時タスク化）",
-  "risk_policy": "リスク対応方針（例: 曇天時フォールバック・冗長構成）"
-}
+
+# 厳格ルール
+- 上記スキーマをテンプレートとして**具体的な値で埋めたJSONのみ**を返す。
+- コメント/説明文/コードフェンス/「例:」という文字は**出力禁止**。
 """
 
 # =========================
-# 2) 軽量サニタイザ & パーサ（Tab2と同等）
+# 2) 軽量サニタイザ & パーサ（安全にJSON化）
 # =========================
 def _strip_code_fences(s: str) -> str:
     return re.sub(r"^```(?:json)?\s*|\s*```$", "", s.strip(), flags=re.IGNORECASE|re.MULTILINE)
@@ -118,7 +123,7 @@ def _safe_parse_json(raw: str) -> dict:
         return json.loads(cleaned)
 
 # =========================
-# 3) Groq 呼び出し
+# 3) Groq 呼び出し（OpenAI互換）
 # =========================
 def _call_llm(client, model: str, payload: dict):
     if client is None:
@@ -141,22 +146,24 @@ def _call_llm(client, model: str, payload: dict):
         return None, f"{err}\nRaw: {str(raw)[:700]}..." if 'raw' in locals() else err
 
 # =========================
-# 4) レンダリング（表×3 + 補完策 + コスト + リスク + ロードマップ）
+# 4) レンダリング（理由→構成→補完策→コスト→リスク→ロードマップ）
 # =========================
-st.markdown("#### 🎯 構成方針の背景と意図")
-rat = data.get("rationale", {}) or {}
-if rat:
-    st.markdown(f"**全体方針:** {rat.get('overview','')}")
-    st.markdown(f"**衛星構成:** {rat.get('satellite_choice','')}")
-    st.markdown(f"**航空層:** {rat.get('aerial_choice','')}")
-    st.markdown(f"**地上層:** {rat.get('ground_choice','')}")
-    st.markdown(f"**融合設計:** {rat.get('fusion_design_choice','')}")
-    st.markdown(f"**コスト設計:** {rat.get('cost_strategy','')}")
-    st.markdown(f"**リスク方針:** {rat.get('risk_policy','')}")
-else:
-    st.caption("（構成意図なし）")
-  
 def _render_plan_readable(data: dict):
+    # --- 構成意図（Rationale） ---
+    st.markdown("#### 🎯 構成方針の背景と意図")
+    rat = (data or {}).get("rationale", {}) or {}
+    if rat:
+        st.markdown(f"- **全体方針**: {rat.get('overview','')}")
+        st.markdown(f"- **衛星構成**: {rat.get('satellite_choice','')}")
+        st.markdown(f"- **航空層**: {rat.get('aerial_choice','')}")
+        st.markdown(f"- **地上層**: {rat.get('ground_choice','')}")
+        st.markdown(f"- **融合設計**: {rat.get('fusion_design_choice','')}")
+        st.markdown(f"- **コスト戦略**: {rat.get('cost_strategy','')}")
+        st.markdown(f"- **リスク方針**: {rat.get('risk_policy','')}")
+    else:
+        st.caption("（構成意図は未出力）")
+
+    # --- 衛星コンステレーション ---
     st.markdown("#### 🛰 衛星コンステレーション（改良案）")
     const = data.get("constellation", []) or []
     if const:
@@ -173,6 +180,7 @@ def _render_plan_readable(data: dict):
     else:
         st.caption("（無し）")
 
+    # --- 航空レイヤ ---
     st.markdown("#### ✈️ 航空レイヤ（UAV/HAPS）")
     aerial = data.get("aerial_layer", []) or []
     if aerial:
@@ -190,6 +198,7 @@ def _render_plan_readable(data: dict):
     else:
         st.caption("（無し）")
 
+    # --- 地上レイヤ ---
     st.markdown("#### 🌱 地上レイヤ（検証・補完）")
     ground = data.get("ground_layer", []) or []
     if ground:
@@ -204,6 +213,7 @@ def _render_plan_readable(data: dict):
     else:
         st.caption("（無し）")
 
+    # --- 融合設計 ---
     st.markdown("#### 🔗 融合設計（データフロー / 処理 / 品質）")
     fus = data.get("fusion_design", {}) or {}
     col1, col2, col3 = st.columns(3)
@@ -217,6 +227,7 @@ def _render_plan_readable(data: dict):
         st.markdown("**品質(QA/QC)**")
         for t in fus.get("quality", []) or []: st.markdown(f"- {t}")
 
+    # --- GAP対応 ---
     st.markdown("#### 🧩 GAPへの対応（軸ごと）")
     gaps = data.get("gap_closures", []) or []
     if gaps:
@@ -230,27 +241,34 @@ def _render_plan_readable(data: dict):
     else:
         st.caption("（無し）")
 
+    # --- コスト ---
     st.markdown("#### 💰 月額コスト見積（目安）")
     cost = data.get("monthly_cost_estimate", {}) or {}
     if cost:
-        df = pd.DataFrame([{
-            "項目": k, "目安": v
-        } for k, v in cost.items()])
+        df = pd.DataFrame([{"項目": k, "目安": v} for k, v in cost.items()])
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.caption("（無し）")
 
+    # --- リスク ---
     st.markdown("#### ⚠️ リスクと対策")
     rsk = data.get("risks_and_mitigations", []) or []
-    for item in rsk:
-        st.markdown(f"- **{item.get('risk','')}** → 対策: {item.get('mitigation','')}")
+    if rsk:
+        for item in rsk:
+            st.markdown(f"- **{item.get('risk','')}** → 対策: {item.get('mitigation','')}")
+    else:
+        st.caption("（無し）")
 
+    # --- ロードマップ ---
     st.markdown("#### 🗺 ロードマップ")
     road = data.get("phased_roadmap", []) or []
-    for p in road:
-        st.markdown(f"- **{p.get('phase','')} ({p.get('months','')})**: {p.get('scope','')}")
+    if road:
+        for p in road:
+            st.markdown(f"- **{p.get('phase','')} ({p.get('months','')})**: {p.get('scope','')}")
+    else:
+        st.caption("（無し）")
 
-    # JSONプレビューは畳み
+    # --- JSONプレビュー（畳み） ---
     with st.expander("現在のTab3 JSON（構成方針）", expanded=False):
         st.json(data, expanded=False)
 
@@ -265,10 +283,7 @@ def render_tab(client, model, tab1_json, tab2_json):
         return
 
     if st.button("構成方針を生成", type="primary", use_container_width=True):
-        payload = {
-            "tab1_output": tab1_json,
-            "tab2_output": tab2_json
-        }
+        payload = {"tab1_output": tab1_json, "tab2_output": tab2_json}
         with st.spinner("Groqに問い合わせ中…"):
             data, err = _call_llm(client, model, payload)
         if err:
