@@ -1,36 +1,36 @@
 # tab3_plan.py
 import json, streamlit as st
 
-SYSTEM_PROMPT = """あなたは衛星データ統合のソリューションアーキテクトです。
-Tab1/Tab2を踏まえ、下記スキーマで**有効なJSONのみ**を返却。
+SYSTEM_PROMPT = """あなたは衛星データ統合のアーキテクトです。
+Tab1（衛星のみ）とTab2（GAP）を踏まえ、下記スキーマの**有効なJSONのみ**を返却。
+
 {
-  "constellation": [
-    {"name":"ALOS-4","type":"SAR","band":"L","role":"植生下/地盤", "why":"理由"},
-    {"name":"ICEYE","type":"SAR","band":"X","role":"高頻度/夜間","why":""},
-    {"name":"PlanetScope","type":"Optical","band":"可視-NIR","role":"高頻度光学","why":""}
+  "constellation": [   // 衛星側の見直し・追加
+    {"name":"ALOS-4","type":"SAR","band":"L","role":"植生下/地盤","why":"再訪/貫通性で補完"},
+    {"name":"ICEYE","type":"SAR","band":"X","role":"高頻度/夜間","why":"頻度ギャップ解消"}
   ],
-  "aerial_layer": [
-    {"name":"HAPS","role":"雲下の広域/準リアルタイム","why":""},
-    {"name":"UAV-MSI","role":"現地詳細/検証","why":""}
+  "aerial_layer": [    // 非衛星（空中）で補完
+    {"name":"HAPS","role":"雲下の広域・準リアルタイム","why":"頻度と雲被りのギャップ補完"},
+    {"name":"UAV-MSI","role":"現地詳細/検証","why":"精度・真値補正"}
   ],
-  "ground_layer": [
-    {"name":"IoT水位計","role":"真値補正","why":""},
+  "ground_layer": [    // 地上・社会で補完
+    {"name":"IoT水位計/土壌水分","role":"真値補正","why":"モデル校正・説明可能性"},
     {"name":"GNSS/強震計","role":"InSAR補正","why":""},
     {"name":"行政DB/ハザード","role":"条件付与","why":""}
   ],
   "fusion": {
-    "architecture":"例: 衛星(SAR/光学/熱)×HAPS×UAV×IoTを時系列で統合。クラウドにETL→特徴量→リスクスコア",
+    "architecture":"衛星(多周波/光学/熱)×HAPS×UAV×IoT を時系列でETL→特徴量→リスクスコア",
     "methods":["時系列異常検知","セマンティックセグメンテーション","ベイズ推定"],
-    "cadence":"更新頻度（例: 1-3日）"
+    "cadence":"例: 1-3日更新"
   },
   "outcomes":[
-    "被害推定の即時化（例: 支払判定T+24h）",
-    "地点単位の精度向上（例: IoT補正でRMSE▲x%）",
-    "運用コストの最適化（商用/オープンの最適配分）"
+    "支払判定のT+24h化",
+    "地点単位のRMSE▲x%（IoT補正込み）",
+    "運用コスト最適化（商用/オープン配合）"
   ],
-  "cost_note":"コスト傾向の簡潔な見積の方針（サブスク/従量の考え方）"
+  "cost_note":"サブスク/従量の考え方を簡潔に"
 }
-返すのは**厳密なJSONのみ**。"""
+"""
 
 def _call_llm(client, model, tab1_json, tab2_json):
     if client is None: 
