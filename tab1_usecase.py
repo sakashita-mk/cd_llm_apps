@@ -105,5 +105,5 @@ def render_tab(client, model):
                 for l in data["limitations_sat_only"]: st.markdown(f"- {l}")
 
     if st.session_state.get("tab1_json"):
-    with st.expander("現在のTab1 JSON（衛星のみ）", expanded=False):
-        st.json(st.session_state["tab1_json"], expanded=False)
+    st.caption("現在のTab1 JSON（衛星のみ）")
+    st.json(st.session_state["tab1_json"])
