@@ -116,7 +116,7 @@ def _call_llm(client, model: str, payload: dict):
 def _render_gap_readable(data: dict):
     tobe = data.get("to_be_requirements", {}) or {}
     dims = data.get("dimensions", []) or []
-    top3 = data.get("priority_gaps_top3", []) or []
+
 
     st.markdown("#### 目的（To-Beに反映）")
     st.write(data.get("goal", "（モデル出力なし）"))
