@@ -77,6 +77,15 @@ SYSTEM_PROMPT = r"""
     {"phase": "GA", "months": "9+", "scope": "運用化：月額上限内での最適運用/運航計画の自動化"}
   ]
 }
+"rationale": {
+  "overview": "全体方針（例: 雲被りリスクをSARとHAPSで補完する統合設計）",
+  "satellite_choice": "衛星構成をこうした理由（例: 再訪頻度・解像度・コストバランス）",
+  "aerial_choice": "UAV/HAPS層を加えた理由（例: 曇天時の光学欠測補完・高分解能検証）",
+  "ground_choice": "地上観測を含めた理由（例: バイアス補正・QA/QC向上）",
+  "fusion_design_choice": "融合設計をこうした理由（例: NDVI/LST統合解析・欠測補間の必要性）",
+  "cost_strategy": "コスト設計の意図（例: 月額上限120万円をターゲットに、商用衛星は必要時タスク化）",
+  "risk_policy": "リスク対応方針（例: 曇天時フォールバック・冗長構成）"
+}
 """
 
 # =========================
@@ -134,6 +143,19 @@ def _call_llm(client, model: str, payload: dict):
 # =========================
 # 4) レンダリング（表×3 + 補完策 + コスト + リスク + ロードマップ）
 # =========================
+st.markdown("#### 🎯 構成方針の背景と意図")
+rat = data.get("rationale", {}) or {}
+if rat:
+    st.markdown(f"**全体方針:** {rat.get('overview','')}")
+    st.markdown(f"**衛星構成:** {rat.get('satellite_choice','')}")
+    st.markdown(f"**航空層:** {rat.get('aerial_choice','')}")
+    st.markdown(f"**地上層:** {rat.get('ground_choice','')}")
+    st.markdown(f"**融合設計:** {rat.get('fusion_design_choice','')}")
+    st.markdown(f"**コスト設計:** {rat.get('cost_strategy','')}")
+    st.markdown(f"**リスク方針:** {rat.get('risk_policy','')}")
+else:
+    st.caption("（構成意図なし）")
+  
 def _render_plan_readable(data: dict):
     st.markdown("#### 🛰 衛星コンステレーション（改良案）")
     const = data.get("constellation", []) or []
